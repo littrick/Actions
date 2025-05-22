@@ -1,0 +1,47 @@
+name: Push repo workflow
+# 将一个仓库的源码同步到另一个仓库
+
+on:
+  workflow_call:
+      inputs:
+
+        repository:
+          type: string
+          description: 'Repository name with owner. For example, actions/checkout'
+          default: git@github.com:${{ github.repository }}
+
+        remote-repository:
+          type: string
+          required: true
+
+      secrets:
+        ssh-key:
+          required: true
+
+jobs:
+  push:
+    runs-on: ubuntu-latest
+
+    steps:
+
+    - name: 'Prepare the ssh-key file'
+      run: |
+        mkdir -p ~/.ssh && \
+        echo "${{ secrets.ssh-key }}" > ~/.ssh/id_rsa && \
+        chmod 600 ~/.ssh/id_rsa
+
+    - name: 'Config the ssh'
+      run: |
+        cat > ~/.ssh/config << EOF
+        StrictHostKeyChecking no
+        EOF
+
+    - name: Clone the repository
+      run: git clone ${{ inputs.repository }} . --bare --mirror
+
+    - name: Add the remote repository
+      run: git remote add remote-repo ${{ inputs.remote-repository }}
+
+    - name: Push to remote repository
+      run: git push --mirror remote-repo
+
