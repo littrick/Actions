@@ -1,79 +1,79 @@
 name: Build busybox
 on:
-    workflow_dispatch:
-        inputs:
-            static:
-                description: Build static binary (no shared libs)
-                default: true
-                type: boolean
+  workflow_dispatch:
+    inputs:
+      static:
+        description: Build static binary (no shared libs)
+        default: true
+        type: boolean
 
-            branch:
-                description: |
-                    The branch or tag you want to build.
-                    (e.g. 1_37_0) refs: (https://git.busybox.net/busybox/refs/)
-                default: master
-                type: string
+      branch:
+        description: |
+          The branch or tag you want to build.
+          (e.g. 1_37_0) refs: (https://git.busybox.net/busybox/refs/)
+        default: master
+        type: string
 
-    workflow_call:
-        inputs:
-            static:
-                description: Build static binary (no shared libs)
-                default: true
-                type: boolean
+  workflow_call:
+    inputs:
+      static:
+        description: Build static binary (no shared libs)
+        default: true
+        type: boolean
 
-            branch:
-                description: |
-                    The branch or tag you want to build.
-                    (e.g. 1_37_0) refs: (https://git.busybox.net/busybox/refs/)
-                default: master
-                type: string
+      branch:
+        description: |
+          The branch or tag you want to build.
+          (e.g. 1_37_0) refs: (https://git.busybox.net/busybox/refs/)
+        default: master
+        type: string
 
 jobs:
-    build:
-        runs-on: ubuntu-latest
-        env:
-            CC: clang
-            HOSTCC: clang
-            HOSTCXX: clang++
+  build:
+    runs-on: ubuntu-latest
+    env:
+      CC: clang
+      HOSTCC: clang
+      HOSTCXX: clang++
 
-        steps:
-            - name: Setup the tools
-              run: |
-                  sudo apt-get update && \
-                  sudo apt-get install -y make clang llvm lld && \
-                  sudo apt-get install -y bzip2 && \
-                  sudo apt-get install -y cpio gzip
+    steps:
+      - name: Setup the tools
+        run: |
+          sudo apt-get update && \
+          sudo apt-get install -y make clang llvm lld && \
+          sudo apt-get install -y bzip2 && \
+          sudo apt-get install -y cpio gzip
 
-            - name: Clone the repository
-              run: git clone https://git.busybox.net/busybox -b ${{ inputs.branch }} --depth 1 .
+      - name: Clone the repository
+        run: git clone https://git.busybox.net/busybox -b ${{ inputs.branch }} --depth 1 .
 
-            - name: Make the Makefile support CC|HOSTCC override via environment variables
-              run: sed -i 's/^\(\(HOSTCC\|HOSTCXX\|CC\)\s*\)=/\1?=/' Makefile
+      - name: Make the Makefile support CC|HOSTCC override via environment variables
+        run: sed -i 's/^\(\(HOSTCC\|HOSTCXX\|CC\)\s*\)=/\1?=/' Makefile
 
-            - name: Config the BusyBox
-              run: make defconfig
+      - name: Config the BusyBox
+        run: make defconfig
 
-            - name: Configure for static build
-              if: ${{ inputs.static }}
-              run: sed -i '/# CONFIG_STATIC /s/.*/CONFIG_STATIC=y/' .config
+      - name: Configure for static build
+        if: ${{ inputs.static }}
+        run: sed -i '/# CONFIG_STATIC /s/.*/CONFIG_STATIC=y/' .config
 
-            - name: Suppress STATIC_LIBGCC warnings when compiling with clang
-              run: sed -i '/CONFIG_STATIC_LIBGCC=/s/.*/CONFIG_STATIC_LIBGCC=n/' .config
+      - name: Suppress STATIC_LIBGCC warnings when compiling with clang
+        run: sed -i '/CONFIG_STATIC_LIBGCC=/s/.*/CONFIG_STATIC_LIBGCC=n/' .config
 
-            - name: Fix the bug(https://lists.busybox.net/pipermail/busybox-cvs/2024-January/041752.html)
-              run: sed -i '/CONFIG_TC=/s/.*/CONFIG_TC=n/' .config
+      - name: Fix the bug(https://lists.busybox.net/pipermail/busybox-cvs/2024-January/041752.html)
+        run: sed -i '/CONFIG_TC=/s/.*/CONFIG_TC=n/' .config
 
-            - name: Build busybox
-              run: make -j$(nproc) install
+      - name: Build busybox
+        run: make -j$(nproc) install
 
-            - name: Package and compress busybox
-              run: tar -czvf busybox-dist.tar.gz -C _install .
+      - name: Package and compress busybox
+        run: tar -czvf busybox-dist.tar.gz -C _install .
 
-            - name: Upload
-              uses: actions/upload-artifact@v4
-              with:
-                  name: busybox-${{ inputs.branch }}
-                  path: busybox-${{ inputs.branch }}-dist.tar.gz
-                  overwrite: true
-                  include-hidden-files: true
-                  retention-days: 1
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: busybox-${{ inputs.branch }}
+          path: busybox-${{ inputs.branch }}-dist.tar.gz
+          overwrite: true
+          include-hidden-files: true
+          retention-days: 1

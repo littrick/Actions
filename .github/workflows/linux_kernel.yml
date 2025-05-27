@@ -1,144 +1,143 @@
 name: Build linux kernel
 on:
-    workflow_dispatch:
-        inputs:
-            branch:
-                description: |
-                    The branch or tag to build.
-                    (e.g. v6.15) refs: (https://github.com/torvalds/linux/tags)
-                default: master
-                type: string
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: |
+          The branch or tag to build.
+          (e.g. v6.15) refs: (https://github.com/torvalds/linux/tags)
+        default: master
+        type: string
 
-            arch:
-                description: Target architecture to build
-                default: x86_64
-                type: choice
-                options: [x86, x86_64, arm, arm64, riscv ]
+      arch:
+        description: Target architecture to build
+        default: x86_64
+        type: choice
+        options: [x86, x86_64, arm, arm64, riscv]
 
-            enable_configs:
-                description: |
-                    The following CONFIG options will be enabled (CONFIG_XXX=y) (e.g.
-                    CONFIG_XXX1 CONFIG_XXX2 ...
-                type: string
+      enable_configs:
+        description: |
+          The following CONFIG options will be enabled (CONFIG_XXX=y) (e.g.
+          CONFIG_XXX1 CONFIG_XXX2 ...
+        type: string
 
-            disable_configs:
-                description: |
-                    The following CONFIG options will be disabled (CONFIG_XXX=n) (e.g.
-                    CONFIG_XXX1 CONFIG_XXX2 ...
-                type: string
+      disable_configs:
+        description: |
+          The following CONFIG options will be disabled (CONFIG_XXX=n) (e.g.
+          CONFIG_XXX1 CONFIG_XXX2 ...
+        type: string
 
-    workflow_call:
-        inputs:
-            branch:
-                description: |
-                    The branch or tag to build.
-                    (e.g. v6.15) refs: (https://github.com/torvalds/linux/tags)
-                default: master
-                type: string
+  workflow_call:
+    inputs:
+      branch:
+        description: |
+          The branch or tag to build.
+          (e.g. v6.15) refs: (https://github.com/torvalds/linux/tags)
+        default: master
+        type: string
 
-            arch:
-                description: Target architecture to build
-                default: x86_64
-                type: string
+      arch:
+        description: Target architecture to build
+        default: x86_64
+        type: string
 
-            enable_configs:
-                description: |
-                    The following CONFIG options will be enabled (CONFIG_XXX=y) (e.g.
-                    CONFIG_XXX1 CONFIG_XXX2 ...
-                type: string
+      enable_configs:
+        description: |
+          The following CONFIG options will be enabled (CONFIG_XXX=y) (e.g.
+          CONFIG_XXX1 CONFIG_XXX2 ...
+        type: string
 
-            disable_configs:
-                description: |
-                    The following CONFIG options will be disabled (CONFIG_XXX=n) (e.g.
-                    CONFIG_XXX1 CONFIG_XXX2 ...
-                type: string
-
+      disable_configs:
+        description: |
+          The following CONFIG options will be disabled (CONFIG_XXX=n) (e.g.
+          CONFIG_XXX1 CONFIG_XXX2 ...
+        type: string
 
 jobs:
-    selection:
-        runs-on: ubuntu-latest
-        strategy:
-            matrix:
-                build:
-                    - arch: x86
-                      target: bzImage
-                    - arch: x86_64
-                      target: bzImage
-                    - arch: arm
-                      target: zImage
-                    - arch: arm64
-                      target: Image.gz
-                    - arch: riscv
-                      target: Image.gz
+  selection:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        build:
+          - arch: x86
+            target: bzImage
+          - arch: x86_64
+            target: bzImage
+          - arch: arm
+            target: zImage
+          - arch: arm64
+            target: Image.gz
+          - arch: riscv
+            target: Image.gz
 
-        outputs:
-            arch: ${{ steps.selection.outputs.arch }}
-            target: ${{ steps.selection.outputs.target }}
+    outputs:
+      arch: ${{ steps.selection.outputs.arch }}
+      target: ${{ steps.selection.outputs.target }}
 
-        steps:
-            - name: Echo the matrix
-              if: ${{ inputs.arch == matrix.build.arch }}
-              id: selection
-              run: |
-                  echo "arch=${{ matrix.build.arch }}" >> "$GITHUB_OUTPUT"
-                  echo "target=${{ matrix.build.target }}" >> "$GITHUB_OUTPUT"
+    steps:
+      - name: Echo the matrix
+        if: ${{ inputs.arch == matrix.build.arch }}
+        id: selection
+        run: |
+          echo "arch=${{ matrix.build.arch }}" >> "$GITHUB_OUTPUT"
+          echo "target=${{ matrix.build.target }}" >> "$GITHUB_OUTPUT"
 
-    build:
-        needs: selection
-        runs-on: ubuntu-latest
-        env:
-            LLVM: 1
-            ARCH: ${{ needs.selection.outputs.arch }}
-            BUILD_TARGET: ${{ needs.selection.outputs.target }}
+  build:
+    needs: selection
+    runs-on: ubuntu-latest
+    env:
+      LLVM: 1
+      ARCH: ${{ needs.selection.outputs.arch }}
+      BUILD_TARGET: ${{ needs.selection.outputs.target }}
 
-        steps:
-            - name: Setup the tools
-              run: |
-                  sudo apt-get update && \
-                  sudo apt-get install -y make clang llvm lld && \
-                  sudo apt-get install -y flex bison bc libelf-dev libssl-dev
+    steps:
+      - name: Setup the tools
+        run: |
+          sudo apt-get update && \
+          sudo apt-get install -y make clang llvm lld && \
+          sudo apt-get install -y flex bison bc libelf-dev libssl-dev
 
-            - name: Clone the repository
-              run: git clone https://github.com/torvalds/linux.git -b ${{ inputs.branch }} --depth 1 .
+      - name: Clone the repository
+        run: git clone https://github.com/torvalds/linux.git -b ${{ inputs.branch }} --depth 1 .
 
-            - name: Make default configuration
-              run: make defconfig
+      - name: Make default configuration
+        run: make defconfig
 
-            - name: Enable configurations
-              run: |
-                  for conf in ${{ inputs.enable_configs }}; do
-                      ./scripts/config --enable $conf
-                  done
+      - name: Enable configurations
+        run: |
+          for conf in ${{ inputs.enable_configs }}; do
+              ./scripts/config --enable $conf
+          done
 
-            - name: Disable configurations
-              run: |
-                  for conf in ${{ inputs.disable_configs }}; do
-                      ./scripts/config --disable $conf
-                  done
+      - name: Disable configurations
+        run: |
+          for conf in ${{ inputs.disable_configs }}; do
+              ./scripts/config --disable $conf
+          done
 
-            - name: Refresh the configuration
-              run: make olddefconfig
+      - name: Refresh the configuration
+        run: make olddefconfig
 
-            - name: Check the disabled configurations
-              run: |
-                  for conf in ${{ inputs.enable_configs }}; do
-                      test "$(./scripts/config --state $conf)" = "y" || (echo "Fail to enable $conf" && exit -1)
-                  done
+      - name: Check the disabled configurations
+        run: |
+          for conf in ${{ inputs.enable_configs }}; do
+              test "$(./scripts/config --state $conf)" = "y" || (echo "Fail to enable $conf" && exit -1)
+          done
 
-            - name: Check the disabled configurations
-              run: |
-                  for conf in ${{ inputs.disable_configs }}; do
-                      test "$(./scripts/config --state $conf)" = "n" || (echo "Fail to disable $conf" && exit -1)
-                  done
+      - name: Check the disabled configurations
+        run: |
+          for conf in ${{ inputs.disable_configs }}; do
+              test "$(./scripts/config --state $conf)" = "n" || (echo "Fail to disable $conf" && exit -1)
+          done
 
-            - name: Build kernel
-              run: make -j$(nproc) ${{ env.BUILD_TARGET }}
+      - name: Build kernel
+        run: make -j$(nproc) ${{ env.BUILD_TARGET }}
 
-            - name: Upload
-              uses: actions/upload-artifact@v4
-              with:
-                  name: ${{ env.BUILD_TARGET }}-${{ inputs.arch }}-${{ inputs.branch }}
-                  path: arch/${{ env.ARCH }}/boot/${{ env.BUILD_TARGET }}
-                  overwrite: true
-                  include-hidden-files: true
-                  retention-days: 1
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.BUILD_TARGET }}-${{ inputs.arch }}-${{ inputs.branch }}
+          path: arch/${{ env.ARCH }}/boot/${{ env.BUILD_TARGET }}
+          overwrite: true
+          include-hidden-files: true
+          retention-days: 1
