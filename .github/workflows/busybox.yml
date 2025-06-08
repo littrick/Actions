@@ -67,7 +67,7 @@ jobs:
         run: make -j$(nproc) install
 
       - name: Package and compress busybox
-        run: tar -czvf busybox-dist.tar.gz -C _install .
+        run: tar -czvf busybox-${{ inputs.branch }}-dist.tar.gz -C _install .
 
       - name: Upload
         uses: actions/upload-artifact@v4
