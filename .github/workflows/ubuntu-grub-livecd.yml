@@ -1,0 +1,135 @@
+name: Build the livecd image with GRUB and Ubuntu
+
+on:
+  workflow_dispatch:
+    inputs:
+        kernel-branch:
+          description: |
+            The branch or tag to build.
+            (e.g. v6.15) refs: (https://github.com/torvalds/linux/tags)
+          default: master
+          type: string
+        
+        enable_configs:
+          description: |
+            The following CONFIG options will be enabled (CONFIG_XXX=y) (e.g.
+            CONFIG_XXX1 CONFIG_XXX2 ...
+          type: string
+  
+        disable_configs:
+          description: |
+            The following CONFIG options will be disabled (CONFIG_XXX=n) (e.g.
+            CONFIG_XXX1 CONFIG_XXX2 ...
+          type: string
+
+        ubuntu-base-url:
+          description: |
+            The Ubuntu base url. refs: (http://cdimage.ubuntu.com/ubuntu-base/releases/)
+          default: "http://cdimage.ubuntu.com/ubuntu-base/releases/24.04/release/ubuntu-base-24.04.3-base-amd64.tar.gz"
+          type: string
+
+jobs:
+  create-ubuntu-rootfs:
+    runs-on: ubuntu-latest
+    if: false
+    steps:
+      - name: Download Ubuntu Base
+        run: |
+          mkdir -p ubuntu-rootfs
+          wget ${{ inputs.ubuntu-base-url }} -qO - | tar -xzvf - -C ubuntu-rootfs
+      
+      - name: Create the init program
+        run: |
+          cat <<'EOF' | clang -x c -static -o ubuntu-rootfs/init -
+          #include <stdio.h>
+          #include <unistd.h>
+          #include <sys/wait.h>
+          #include <stdlib.h>
+          #include <sys/mount.h>
+
+          int main() {
+              pid_t pid;
+              int status;
+
+              if (0 != mount("none", "/proc", "proc", MS_NOSUID|MS_NOEXEC|MS_NODEV, NULL)) printf("Fail to mount /proc");
+              if (0 != mount("none", "/sys", "sysfs", MS_NOSUID|MS_NOEXEC|MS_NODEV, NULL)) printf("Fail to mount /proc");
+              if (0 != mount("none", "/dev", "devtmpfs", MS_NOSUID, "mode=0755")) printf("Fail to mount /proc");
+              if (0 != mount("none", "/run", "tmpfs", MS_NOSUID|MS_NODEV, "mode=0755")) printf("Fail to mount /proc");
+
+              while (1) {
+                  pid = fork();
+                  if (pid == 0) {
+                      setsid();
+                      ioctl(STDIN_FILENO, TIOCSCTTY, 0 /*only try, don't steal*/);
+
+                      printf("trying run /bin/bash...\n");
+                      execl("/bin/bash", "/bin/bash");
+
+                      exit(EXIT_FAILURE);
+                  } else if (pid > 0) {
+                      // 父进程 - 等待子进程退出
+                      waitpid(pid, &status, 0);
+                      printf("Shell process exited with status %d, restarting...\n", WEXITSTATUS(status));
+                  } else {
+                      perror("fork");
+                      sleep(1); // 防止fork失败时快速循环
+                  }
+              }
+
+              return 0;
+          }
+          EOF
+
+          chmod +x ubuntu-rootfs/init
+
+
+      - name: Set up the DNS resolver
+        run: |
+          cat <<'EOF' | tee ubuntu-rootfs/etc/resolv.conf
+          nameserver 114.114.114.114
+          EOF
+
+      - name: Build the cpio archive
+        run: |
+          mkdir -p rootfs
+          find ubuntu-rootfs -printf "%P\n" | cpio -D ubuntu-rootfs -H newc -o | gzip -9 > rootfs/ubuntu-rootfs.cpio.gz
+
+      - name: Upload Ubuntu rootfs artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ubuntu-rootfs
+          path: rootfs/ubuntu-rootfs.cpio.gz
+          retention-days: 1
+
+  create-grub-livecd:
+    # needs: create-ubuntu-rootfs
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout the repository
+        uses: actions/checkout@v4
+
+      - name: Show the checked out files
+        run: |
+          pwd
+          echo "The following files are checked out:"
+          ls -lRa .
+
+      - name: Call linux kernel build workflow
+        id: build_kernel
+        uses: ./.github/workflows/linux_kernel.yml
+        with:
+          branch: ${{ inputs.kernel-branch }}
+          arch: x86_64
+          enable_configs: ${{ inputs.enable_configs }}
+          disable_configs: ${{ inputs.disable_configs }}
+
+      - name: Download the kernel artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: linux-kernel
+
+      - name: Show the Downloaded Artifacts
+        run: |
+          echo "The following artifacts are downloaded:"
+          ls -lR $GITHUB_WORKSPACE
+
