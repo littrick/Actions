@@ -9,10 +9,19 @@ on:
         default: "ubuntu:latest"
         type: string
       architecture:
-        description: "目标架构（例如 amd64、arm64、arm/v7）"
+        description: "目标架构"
         required: true
         default: "amd64"
-        type: string
+        type: choice
+        options:
+          - amd64
+          - arm64
+          - arm/v7
+          - arm/v6
+          - "386"
+          - ppc64le
+          - s390x
+          - riscv64
       registry:
         description: "镜像仓库（例如 docker.io、ghcr.io）"
         required: true
