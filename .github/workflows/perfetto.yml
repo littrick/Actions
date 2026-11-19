@@ -1,4 +1,4 @@
-name: 构建 Perfetto tracebox
+name: Build Perfetto tracebox
 
 # 只编译 perfetto 的 tracebox（独立静态二进制，内含 perfetto 命令行、
 # traced、traced_probes 等，用于抓取 trace），不做完整构建。

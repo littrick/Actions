@@ -1,4 +1,4 @@
-name: 下载 Docker 镜像
+name: Download Docker Image
 
 on:
   workflow_dispatch:
