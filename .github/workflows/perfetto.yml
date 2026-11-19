@@ -1,0 +1,150 @@
+name: 构建 Perfetto tracebox
+
+# 只编译 perfetto 的 tracebox（独立静态二进制，内含 perfetto 命令行、
+# traced、traced_probes 等，用于抓取 trace），不做完整构建。
+#
+# 静态链接要点：
+#   - is_clang=true + 自带的 hermetic clang 工具链
+#   - monolithic_binaries=true  -> 生成独立可执行文件，不依赖 libperfetto.so
+#   - extra_ldflags="-static"   -> 生成的 ELF 没有动态段（无 NEEDED 依赖）
+#
+# arm64 采用 x64 runner 上的交叉编译：
+#   perfetto 自带的 debian bullseye sysroot 只有动态库，无法静态链接，
+#   因此用 Ubuntu 的 aarch64-linux-gnu 交叉 sysroot（含 libc.a 等静态库）替换。
+
+on:
+  workflow_dispatch:
+    inputs:
+      architecture:
+        description: "目标架构"
+        required: true
+        default: "amd64"
+        type: choice
+        options:
+          - amd64
+          - arm64
+          - all
+      ref:
+        description: "Perfetto 分支、标签或提交（例如 main、v59.1、<commit sha>）"
+        required: true
+        default: "main"
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: tracebox-${{ matrix.arch }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: ${{ inputs.architecture == 'all' && fromJSON('["amd64", "arm64"]') || fromJSON(format('["{0}"]', inputs.architecture)) }}
+    env:
+      # GN 中的架构命名：amd64 -> x64
+      GN_CPU: ${{ matrix.arch == 'amd64' && 'x64' || matrix.arch }}
+
+    steps:
+      - name: 检出 Perfetto 源码
+        uses: actions/checkout@v4
+        with:
+          repository: google/perfetto
+          ref: ${{ inputs.ref }}
+          path: perfetto
+          # 浅克隆以加快速度；由于没有 tag，--version 会显示 (N/A)。
+          # 需要真实版本号时可改为 fetch-depth: 0（完整历史较大）。
+          fetch-depth: 1
+
+      - name: 安装系统依赖
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential python3-venv curl git unzip xz-utils
+          if [ "${{ matrix.arch }}" = "arm64" ]; then
+            # arm64 交叉编译所需的静态 libc/libm 与 libgcc
+            sudo apt-get install -y --no-install-recommends \
+              libc6-dev-arm64-cross gcc-aarch64-linux-gnu
+          fi
+
+      - name: 下载构建工具链
+        working-directory: perfetto
+        # --no-dev-tools: 跳过只在修改源码时才需要的工具（如 clang-format）
+        run: python3 tools/install-build-deps --no-dev-tools
+
+      - name: 准备 arm64 交叉 sysroot
+        if: matrix.arch == 'arm64'
+        working-directory: perfetto
+        run: |
+          SR=/opt/aarch64-sysroot
+          GCC_CROSS_DIR=$(ls -d /usr/lib/gcc-cross/aarch64-linux-gnu/* | head -1)
+
+          # Ubuntu 交叉工具链的布局是 <root>/include、<root>/lib，
+          # 构造 clang --sysroot 期望的 usr/include、usr/lib/<triple> 结构。
+          sudo mkdir -p "$SR/usr/lib/gcc/aarch64-linux-gnu"
+          sudo ln -sfn /usr/aarch64-linux-gnu/include "$SR/usr/include"
+          # lld 会用 sysroot 前缀解析 libm.a 链接脚本里的绝对路径，需要这一项
+          sudo ln -sfn /usr/aarch64-linux-gnu "$SR/usr/aarch64-linux-gnu"
+          sudo ln -sfn /usr/aarch64-linux-gnu/lib "$SR/usr/lib/aarch64-linux-gnu"
+          sudo ln -sfn /usr/aarch64-linux-gnu/lib "$SR/lib"
+          sudo ln -sfn "$GCC_CROSS_DIR" "$SR/usr/lib/gcc/aarch64-linux-gnu/$(basename "$GCC_CROSS_DIR")"
+
+          # perfetto 会按 target_cpu 自动选用该路径作为 target sysroot
+          rm -rf buildtools/debian_bullseye_arm64-sysroot
+          ln -s "$SR" buildtools/debian_bullseye_arm64-sysroot
+
+      - name: 生成构建配置
+        working-directory: perfetto
+        run: |
+          ARGS="is_debug=false is_clang=true monolithic_binaries=true"
+          ARGS="$ARGS enable_perfetto_etm_importer=false extra_ldflags=\"-static\""
+          if [ "${{ matrix.arch }}" != "amd64" ]; then
+            ARGS="$ARGS target_cpu=\"${{ env.GN_CPU }}\""
+          fi
+          echo "gn args: $ARGS"
+          python3 tools/gn gen "out/linux_${GN_CPU}" --args="$ARGS"
+
+      - name: 编译 tracebox
+        working-directory: perfetto
+        run: python3 tools/ninja -C "out/linux_${GN_CPU}" tracebox
+
+      - name: 验证静态链接
+        working-directory: perfetto
+        run: |
+          BIN="out/linux_${GN_CPU}/tracebox"
+          file "$BIN"
+          if readelf -d "$BIN" 2>/dev/null | grep -q NEEDED; then
+            echo "::error::tracebox 仍然依赖动态库"
+            readelf -d "$BIN"
+            exit 1
+          fi
+          echo "未发现动态库依赖（NEEDED），静态链接验证通过"
+
+      - name: 冒烟测试
+        working-directory: perfetto
+        run: |
+          BIN="out/linux_${GN_CPU}/tracebox"
+          if [ "${{ matrix.arch }}" = "amd64" ]; then
+            "$BIN" perfetto --version
+          else
+            # 用 qemu 直接运行 arm64 静态二进制做冒烟测试
+            sudo apt-get install -y --no-install-recommends qemu-user-static
+            qemu-aarch64-static "$BIN" perfetto --version
+          fi
+
+      - name: 生成校验和
+        working-directory: perfetto
+        run: |
+          BIN="out/linux_${GN_CPU}/tracebox"
+          sha256sum "$BIN" | tee "tracebox-${{ matrix.arch }}.sha256"
+
+      - name: 上传产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: perfetto-tracebox-${{ matrix.arch }}
+          path: |
+            perfetto/out/linux_${{ env.GN_CPU }}/tracebox
+            perfetto/tracebox-${{ matrix.arch }}.sha256
+          retention-days: 7
+          if-no-files-found: error
