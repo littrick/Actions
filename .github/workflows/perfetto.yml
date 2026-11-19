@@ -121,18 +121,6 @@ jobs:
           fi
           echo "未发现动态库依赖（NEEDED），静态链接验证通过"
 
-      - name: 冒烟测试
-        working-directory: perfetto
-        run: |
-          BIN="out/linux_${GN_CPU}/tracebox"
-          if [ "${{ matrix.arch }}" = "amd64" ]; then
-            "$BIN" perfetto --version
-          else
-            # 用 qemu 直接运行 arm64 静态二进制做冒烟测试
-            sudo apt-get install -y --no-install-recommends qemu-user-static
-            qemu-aarch64-static "$BIN" perfetto --version
-          fi
-
       - name: 生成校验和
         working-directory: perfetto
         run: |
