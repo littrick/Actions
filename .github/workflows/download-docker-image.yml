@@ -1,0 +1,86 @@
+name: 下载 Docker 镜像
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_name:
+        description: "镜像名称（例如 ubuntu:latest）"
+        required: true
+        default: "ubuntu:latest"
+        type: string
+      architecture:
+        description: "目标架构（例如 amd64、arm64、arm/v7）"
+        required: true
+        default: "amd64"
+        type: string
+      registry:
+        description: "镜像仓库（例如 docker.io、ghcr.io）"
+        required: true
+        default: "docker.io"
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  download:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: 拉取 Docker 镜像
+        env:
+          IMAGE_NAME: ${{ inputs.image_name }}
+          ARCHITECTURE: ${{ inputs.architecture }}
+          REGISTRY: ${{ inputs.registry }}
+        run: |
+          set -euo pipefail
+
+          # docker.io 是 Docker Hub 的隐式仓库，省略前缀，
+          # 使镜像引用与用户平时书写的格式一致。
+          if [ "${REGISTRY}" = "docker.io" ]; then
+              FULL_IMAGE="${IMAGE_NAME}"
+          else
+              FULL_IMAGE="${REGISTRY}/${IMAGE_NAME}"
+          fi
+          echo "FULL_IMAGE=${FULL_IMAGE}" >> "$GITHUB_ENV"
+          echo "ARCHITECTURE=${ARCHITECTURE}" >> "$GITHUB_ENV"
+
+          docker pull --platform "linux/${ARCHITECTURE}" "${FULL_IMAGE}"
+
+          ACTUAL_PLATFORM=$(docker image inspect \
+              --format '{{.Os}}/{{.Architecture}}{{if .Variant}}/{{.Variant}}{{end}}' \
+              "${FULL_IMAGE}")
+          echo "请求的平台：linux/${ARCHITECTURE}"
+          echo "实际拉取的平台：${ACTUAL_PLATFORM}"
+          if [ "${ACTUAL_PLATFORM}" != "linux/${ARCHITECTURE}" ]; then
+              echo "::warning::实际拉取的镜像平台与请求的平台不完全一致"
+          fi
+
+      - name: 将镜像导出为 tar 包
+        id: export
+        run: |
+          set -euo pipefail
+
+          # ':' 和 '/' 不允许出现在 artifact 名称中，需要替换掉
+          SAFE_NAME=$(echo "${FULL_IMAGE}" | sed -E 's#[/:@]#_#g')
+          SAFE_ARCH="${ARCHITECTURE//\//_}"
+          ARCHIVE="${SAFE_NAME}-${SAFE_ARCH}.tar"
+
+          echo "archive=${ARCHIVE}" >> "$GITHUB_OUTPUT"
+          echo "artifact_name=docker-image-${SAFE_NAME}-${SAFE_ARCH}" >> "$GITHUB_OUTPUT"
+
+          docker save -o "${ARCHIVE}" "${FULL_IMAGE}"
+          ls -lh "${ARCHIVE}"
+          sha256sum "${ARCHIVE}" | tee "${ARCHIVE}.sha256"
+
+      - name: 上传镜像 tar 包作为 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.export.outputs.artifact_name }}
+          path: |
+            ${{ steps.export.outputs.archive }}
+            ${{ steps.export.outputs.archive }}.sha256
+          # tar 包内的镜像层已经压缩过，无需再次压缩
+          compression-level: 0
+          retention-days: 7
+          if-no-files-found: error
